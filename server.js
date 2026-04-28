@@ -4,7 +4,7 @@ import { extname, join } from 'node:path';
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = join(process.cwd(), 'public');
-const CACHE_MS = 10 * 60 * 1000;
+const CACHE_MS = 5 * 60 * 1000;
 
 const state = {
   paperTradingEnabled: true,
@@ -32,18 +32,42 @@ const CONFIG = {
   maxConsecutiveLosses: 3
 };
 
-const FALLBACK_COINS = [
-  ['bitcoin', 'Bitcoin', 'BTC', 64200, 1280000000000, 31000000000, 2.7, 1],
-  ['ethereum', 'Ethereum', 'ETH', 3150, 378000000000, 18000000000, 4.3, 2],
-  ['solana', 'Solana', 'SOL', 145, 66000000000, 4200000000, 6.8, 5],
-  ['binancecoin', 'BNB', 'BNB', 585, 90000000000, 1500000000, 3.4, 4],
-  ['ripple', 'XRP', 'XRP', 0.62, 35000000000, 2100000000, 5.2, 7],
-  ['dogecoin', 'Dogecoin', 'DOGE', 0.15, 22000000000, 1900000000, 8.9, 9],
-  ['cardano', 'Cardano', 'ADA', 0.46, 16000000000, 520000000, 3.6, 10],
-  ['avalanche-2', 'Avalanche', 'AVAX', 38, 15000000000, 760000000, 9.4, 11],
-  ['chainlink', 'Chainlink', 'LINK', 15.2, 9000000000, 690000000, 4.8, 14],
-  ['polkadot', 'Polkadot', 'DOT', 7.1, 9900000000, 380000000, 2.9, 15]
-];
+const BINANCE_NAMES = {
+  BTC: ['bitcoin', 'Bitcoin', 1],
+  ETH: ['ethereum', 'Ethereum', 2],
+  BNB: ['binancecoin', 'BNB', 4],
+  SOL: ['solana', 'Solana', 5],
+  XRP: ['ripple', 'XRP', 7],
+  DOGE: ['dogecoin', 'Dogecoin', 9],
+  ADA: ['cardano', 'Cardano', 10],
+  AVAX: ['avalanche-2', 'Avalanche', 11],
+  LINK: ['chainlink', 'Chainlink', 14],
+  DOT: ['polkadot', 'Polkadot', 15],
+  TRX: ['tron', 'TRON', 16],
+  LTC: ['litecoin', 'Litecoin', 20],
+  BCH: ['bitcoin-cash', 'Bitcoin Cash', 21],
+  NEAR: ['near', 'NEAR Protocol', 24],
+  UNI: ['uniswap', 'Uniswap', 25],
+  APT: ['aptos', 'Aptos', 27],
+  FIL: ['filecoin', 'Filecoin', 35],
+  ETC: ['ethereum-classic', 'Ethereum Classic', 36],
+  ATOM: ['cosmos', 'Cosmos Hub', 38],
+  INJ: ['injective-protocol', 'Injective', 45],
+  OP: ['optimism', 'Optimism', 50],
+  ARB: ['arbitrum', 'Arbitrum', 51],
+  SUI: ['sui', 'Sui', 52],
+  SEI: ['sei-network', 'Sei', 60],
+  PEPE: ['pepe', 'Pepe', 62]
+};
+
+const MARKET_CAP_ESTIMATE = {
+  BTC: 1280000000000, ETH: 378000000000, BNB: 90000000000, SOL: 66000000000,
+  XRP: 35000000000, DOGE: 22000000000, ADA: 16000000000, AVAX: 15000000000,
+  LINK: 9000000000, DOT: 9900000000, TRX: 12000000000, LTC: 7000000000,
+  BCH: 8500000000, NEAR: 6500000000, UNI: 6000000000, APT: 5000000000,
+  FIL: 4500000000, ETC: 4200000000, ATOM: 4100000000, INJ: 3000000000,
+  OP: 3200000000, ARB: 3000000000, SUI: 7000000000, SEI: 2500000000, PEPE: 4500000000
+};
 
 function safeNumber(value, fallback = 0) {
   const n = Number(value);
@@ -96,7 +120,7 @@ function getDangerPenalty(coin) {
   const marketCap = safeNumber(coin.market_cap);
   let penalty = 0;
   if (marketCap < 50_000_000 && Math.abs(change) > 20) penalty += 30;
-  if (volume > marketCap * 0.9) penalty += 18;
+  if (marketCap > 0 && volume > marketCap * 0.9) penalty += 18;
   if (change > 25) penalty += 18;
   if (change < -15) penalty += 12;
   return penalty;
@@ -107,7 +131,7 @@ function dangerLabel(coin) {
   const volume = safeNumber(coin.total_volume);
   const marketCap = safeNumber(coin.market_cap);
   if (marketCap < 50_000_000 && Math.abs(change) > 20) return '危険: 小型急騰';
-  if (volume > marketCap * 0.9) return '注意: 出来高過熱';
+  if (marketCap > 0 && volume > marketCap * 0.9) return '注意: 出来高過熱';
   if (change > 25) return '注意: 急騰しすぎ';
   if (change < -15) return '注意: 急落中';
   return '通常監視';
@@ -139,18 +163,42 @@ function normalizeCoin(coin) {
   };
 }
 
-function fallbackMarket() {
-  return FALLBACK_COINS.map(([id, name, symbol, price, marketCap, volume, change, rank]) => normalizeCoin({
-    id,
-    name,
-    symbol,
-    current_price: price,
-    market_cap: marketCap,
-    total_volume: volume,
-    price_change_percentage_24h: change,
-    market_cap_rank: rank,
-    image: `https://assets.coingecko.com/coins/images/1/large/bitcoin.png`
-  })).sort((a, b) => b.score - a.score);
+async function fetchCoinGeckoMarket() {
+  const url = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=volume_desc&per_page=80&page=1&sparkline=false&price_change_percentage=24h';
+  const response = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'crypto-radar-pro/1.0' } });
+  if (!response.ok) throw new Error(`CoinGecko API error ${response.status}`);
+  const data = await response.json();
+  return data.map(normalizeCoin).sort((a, b) => b.score - a.score);
+}
+
+async function fetchBinanceMarket() {
+  const response = await fetch('https://api.binance.com/api/v3/ticker/24hr', { headers: { accept: 'application/json' } });
+  if (!response.ok) throw new Error(`Binance API error ${response.status}`);
+  const data = await response.json();
+  return data
+    .filter((item) => item.symbol.endsWith('USDT'))
+    .map((item) => {
+      const base = item.symbol.replace('USDT', '');
+      const meta = BINANCE_NAMES[base];
+      if (!meta) return null;
+      const [id, name, rank] = meta;
+      const price = safeNumber(item.lastPrice);
+      const volume = safeNumber(item.quoteVolume);
+      const marketCap = MARKET_CAP_ESTIMATE[base] || 0;
+      return normalizeCoin({
+        id,
+        name,
+        symbol: base,
+        image: `https://assets.coingecko.com/coins/images/1/large/bitcoin.png`,
+        current_price: price,
+        market_cap: marketCap,
+        total_volume: volume,
+        price_change_percentage_24h: safeNumber(item.priceChangePercent),
+        market_cap_rank: rank
+      });
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score);
 }
 
 async function fetchMarket() {
@@ -158,23 +206,24 @@ async function fetchMarket() {
     return { market: state.lastMarket, source: 'cache', warning: null };
   }
 
-  const url = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=volume_desc&per_page=80&page=1&sparkline=false&price_change_percentage=24h';
   try {
-    const response = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'crypto-radar-pro/1.0' } });
-    if (!response.ok) throw new Error(`CoinGecko API error ${response.status}`);
-    const data = await response.json();
-    const market = data.map(normalizeCoin).sort((a, b) => b.score - a.score);
+    const market = await fetchCoinGeckoMarket();
     state.lastMarket = market;
     state.cacheUntil = Date.now() + CACHE_MS;
     return { market, source: 'coingecko', warning: null };
-  } catch (error) {
-    if (state.lastMarket.length) {
-      return { market: state.lastMarket, source: 'cache', warning: `${error.message} / キャッシュ表示中` };
+  } catch (coinGeckoError) {
+    try {
+      const market = await fetchBinanceMarket();
+      if (!market.length) throw new Error('Binance returned no supported symbols');
+      state.lastMarket = market;
+      state.cacheUntil = Date.now() + CACHE_MS;
+      return { market, source: 'binance', warning: `${coinGeckoError.message} / Binanceリアルデータ表示中` };
+    } catch (binanceError) {
+      if (state.lastMarket.length) {
+        return { market: state.lastMarket, source: 'cache', warning: `${coinGeckoError.message} / ${binanceError.message} / キャッシュ表示中` };
+      }
+      return { market: [], source: 'none', warning: `${coinGeckoError.message} / ${binanceError.message} / データ取得失敗` };
     }
-    const market = fallbackMarket();
-    state.lastMarket = market;
-    state.cacheUntil = Date.now() + 2 * 60 * 1000;
-    return { market, source: 'fallback', warning: `${error.message} / デモデータ表示中` };
   }
 }
 
@@ -269,7 +318,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/market') {
     const result = await fetchMarket();
     state.lastUpdated = new Date().toISOString();
-    updatePaperTrading(result.market);
+    if (result.market.length) updatePaperTrading(result.market);
     return json(res, 200, { updatedAt: state.lastUpdated, source: result.source, warning: result.warning, config: CONFIG, market: result.market, portfolio: portfolioSummary(result.market), trading: { paperTradingEnabled: state.paperTradingEnabled, pausedReason: state.pausedReason, consecutiveLosses: state.consecutiveLosses }, trades: state.trades.slice(0, 80) });
   }
 
