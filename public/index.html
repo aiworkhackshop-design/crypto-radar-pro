@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Crypto Radar Pro</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #172033 0, #07080c 42%, #050505 100%);
+      color: #f5f7fb;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(18px);
+      background: rgba(5, 5, 8, .82);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      padding: 18px 16px;
+    }
+    .header-inner { max-width: 1180px; margin: 0 auto; }
+    h1 { margin: 0; font-size: 26px; letter-spacing: -.04em; }
+    .sub { color: #aab1c3; font-size: 13px; margin-top: 6px; line-height: 1.5; }
+    main { max-width: 1180px; margin: 0 auto; padding: 16px; }
+    .bar { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 14px; }
+    button {
+      border: 0;
+      border-radius: 14px;
+      padding: 13px 14px;
+      font-weight: 800;
+      font-size: 15px;
+      cursor: pointer;
+      background: #f5f7fb;
+      color: #06070a;
+    }
+    button.secondary { background: #161b28; color: #f5f7fb; border: 1px solid rgba(255,255,255,.12); }
+    button.danger { background: #401313; color: #ffb7b7; border: 1px solid rgba(255,80,80,.35); }
+    .status { padding: 12px 14px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.05); border-radius: 16px; color: #c6ccda; font-size: 13px; line-height: 1.5; }
+    .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+    .metric { background: rgba(255,255,255,.055); border: 1px solid rgba(255,255,255,.09); border-radius: 18px; padding: 14px; }
+    .metric .label { color: #aab1c3; font-size: 12px; }
+    .metric .value { font-size: 22px; font-weight: 900; margin-top: 5px; letter-spacing: -.03em; }
+    .section-title { margin: 22px 0 10px; font-size: 18px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    .card { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 14px; box-shadow: 0 18px 60px rgba(0,0,0,.22); }
+    .coin-top { display: flex; align-items: center; gap: 10px; }
+    .coin-top img { width: 36px; height: 36px; border-radius: 999px; }
+    .coin-name { font-weight: 900; }
+    .coin-symbol { color: #aab1c3; font-size: 12px; margin-top: 2px; }
+    .score { font-size: 32px; font-weight: 950; margin: 12px 0 8px; letter-spacing: -.05em; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 6px 9px; font-size: 12px; font-weight: 800; background: rgba(255,255,255,.08); color: #d7dbea; }
+    .buy { background: rgba(68, 255, 151, .14); color: #8dffbd; border: 1px solid rgba(68,255,151,.25); }
+    .watch { background: rgba(255, 214, 90, .14); color: #ffe089; border: 1px solid rgba(255,214,90,.25); }
+    .danger-pill { background: rgba(255, 82, 82, .14); color: #ffaaaa; border: 1px solid rgba(255,82,82,.28); }
+    .rows { margin-top: 12px; }
+    .row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,.08); font-size: 13px; }
+    .row span:first-child { color: #aab1c3; }
+    .plus { color: #7dff9f; }
+    .minus { color: #ff8585; }
+    .table { overflow: auto; border: 1px solid rgba(255,255,255,.1); border-radius: 18px; }
+    table { width: 100%; border-collapse: collapse; min-width: 720px; background: rgba(255,255,255,.045); }
+    th, td { padding: 11px 10px; border-bottom: 1px solid rgba(255,255,255,.08); text-align: left; font-size: 13px; }
+    th { color: #aab1c3; font-weight: 800; }
+    a { color: #9ecbff; }
+    .notice { margin-top: 18px; color: #aab1c3; font-size: 12px; line-height: 1.6; }
+    @media (min-width: 780px) {
+      .bar { grid-template-columns: 1fr 180px 180px; align-items: center; }
+      .metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>Crypto Radar Pro</h1>
+      <div class="sub">金持ちツール風の情報監視 + ペーパートレード。実売買なし / 秘密鍵なし / MEVなし。</div>
+    </div>
+  </header>
+  <main>
+    <div class="bar">
+      <div class="status" id="status">起動中です。最新データを取得します。</div>
+      <button onclick="loadData()">更新</button>
+      <button class="danger" onclick="resetTrading()">リセット</button>
+    </div>
+
+    <div class="metrics" id="metrics"></div>
+
+    <h2 class="section-title">保有中ポジション</h2>
+    <div class="table"><table id="positions"></table></div>
+
+    <h2 class="section-title">買い監視候補</h2>
+    <div class="grid" id="cards"></div>
+
+    <h2 class="section-title">取引ログ</h2>
+    <div class="table"><table id="trades"></table></div>
+
+    <h2 class="section-title">公式ニュースリンク</h2>
+    <div class="card" id="news">読み込み中...</div>
+
+    <div class="notice">
+      注意: これはペーパートレード用MVPです。実際の売買・投資助言ではありません。自動売買の本番連携は、十分な検証・少額運用・損切り・停止条件を入れてからにしてください。
+    </div>
+  </main>
+<script>
+  const yen = false;
+  const fmtUsd = (n) => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: Math.abs(n) < 1 ? 6 : 2 });
+  const fmtPct = (n) => Number(n || 0).toFixed(2) + '%';
+  const fmtBig = (n) => {
+    n = Number(n || 0);
+    if (n >= 1_000_000_000) return '$' + (n / 1_000_000_000).toFixed(2) + 'B';
+    if (n >= 1_000_000) return '$' + (n / 1_000_000).toFixed(2) + 'M';
+    return '$' + n.toLocaleString('en-US');
+  };
+  const cls = (n) => Number(n) >= 0 ? 'plus' : 'minus';
+  const pillClass = (c) => c.className === 'BUY_WATCH' ? 'pill buy' : c.className === 'DANGER' ? 'pill danger-pill' : 'pill watch';
+
+  async function loadData() {
+    const status = document.getElementById('status');
+    status.textContent = '市場データ取得中...';
+    try {
+      const res = await fetch('/api/market');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || '取得失敗');
+      render(data);
+    } catch (e) {
+      status.textContent = 'エラー: ' + e.message;
+    }
+  }
+
+  function render(data) {
+    const p = data.portfolio;
+    document.getElementById('status').innerHTML = `最終更新: ${new Date(data.updatedAt).toLocaleString('ja-JP')}<br>ペーパートレード: ${data.trading.paperTradingEnabled ? 'ON' : 'OFF'} ${data.trading.pausedReason ? ' / ' + data.trading.pausedReason : ''}`;
+
+    document.getElementById('metrics').innerHTML = `
+      <div class="metric"><div class="label">総資産</div><div class="value">${fmtUsd(p.totalEquity)}</div></div>
+      <div class="metric"><div class="label">現金</div><div class="value">${fmtUsd(p.cash)}</div></div>
+      <div class="metric"><div class="label">確定損益</div><div class="value ${cls(p.closedPnL)}">${fmtUsd(p.closedPnL)}</div></div>
+      <div class="metric"><div class="label">総リターン</div><div class="value ${cls(p.totalReturnPct)}">${fmtPct(p.totalReturnPct)}</div></div>
+      <div class="metric"><div class="label">勝率</div><div class="value">${fmtPct(p.winRate)}</div></div>
+    `;
+
+    document.getElementById('positions').innerHTML = `
+      <tr><th>銘柄</th><th>Entry</th><th>Now</th><th>Value</th><th>PnL</th><th>Opened</th></tr>
+      ${p.positions.length ? p.positions.map(pos => `
+        <tr>
+          <td>${pos.symbol} / ${pos.name}</td><td>${fmtUsd(pos.entryPrice)}</td><td>${fmtUsd(pos.currentPrice)}</td><td>${fmtUsd(pos.value)}</td><td class="${cls(pos.pnlUsd)}">${fmtUsd(pos.pnlUsd)} / ${fmtPct(pos.pnlPct)}</td><td>${new Date(pos.openedAt).toLocaleString('ja-JP')}</td>
+        </tr>`).join('') : '<tr><td colspan="6">現在ポジションなし</td></tr>'}
+    `;
+
+    const candidates = data.market.filter(c => c.className === 'BUY_WATCH' || c.score >= 55).slice(0, 18);
+    document.getElementById('cards').innerHTML = candidates.map(c => `
+      <div class="card">
+        <div class="coin-top"><img src="${c.image}" alt=""><div><div class="coin-name">${c.name}</div><div class="coin-symbol">${c.symbol} / Rank ${c.rank || '-'}</div></div></div>
+        <div class="score">${c.score}</div>
+        <div class="${pillClass(c)}">${c.className}・${c.danger}</div>
+        <div class="rows">
+          <div class="row"><span>価格</span><strong>${fmtUsd(c.price)}</strong></div>
+          <div class="row"><span>24h</span><strong class="${cls(c.change24h)}">${fmtPct(c.change24h)}</strong></div>
+          <div class="row"><span>出来高</span><strong>${fmtBig(c.volume)}</strong></div>
+          <div class="row"><span>時価総額</span><strong>${fmtBig(c.marketCap)}</strong></div>
+        </div>
+      </div>
+    `).join('');
+
+    document.getElementById('trades').innerHTML = `
+      <tr><th>Time</th><th>Type</th><th>Symbol</th><th>Price</th><th>Amount</th><th>PnL</th><th>Reason</th></tr>
+      ${data.trades.length ? data.trades.slice(0, 30).map(t => `
+        <tr><td>${new Date(t.time).toLocaleString('ja-JP')}</td><td>${t.type}</td><td>${t.symbol}</td><td>${fmtUsd(t.price)}</td><td>${fmtUsd(t.amountUsd)}</td><td class="${cls(t.pnlUsd)}">${fmtUsd(t.pnlUsd)} / ${fmtPct(t.pnlPct)}</td><td>${t.reason}</td></tr>
+      `).join('') : '<tr><td colspan="7">まだ取引ログなし</td></tr>'}
+    `;
+  }
+
+  async function resetTrading() {
+    if (!confirm('ペーパートレードを初期化しますか？')) return;
+    await fetch('/api/trading/reset', { method: 'POST' });
+    loadData();
+  }
+
+  async function loadNews() {
+    const res = await fetch('/api/news');
+    const data = await res.json();
+    document.getElementById('news').innerHTML = data.sources.map(s => `<p><a href="${s.url}" target="_blank">${s.name}</a></p>`).join('') + `<p>${data.note}</p>`;
+  }
+
+  loadData();
+  loadNews();
+  setInterval(loadData, 120000);
+</script>
+</body>
+</html>
