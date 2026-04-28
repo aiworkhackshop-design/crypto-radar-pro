@@ -1,8 +1,8 @@
-run = "npm install && npm start"
+run = "node server.js"
 entrypoint = "server.js"
 
 [nix]
 channel = "stable-24_05"
 
 [deployment]
-run = ["sh", "-c", "npm install && npm start"]
+run = ["sh", "-c", "node server.js"]
