@@ -4,6 +4,7 @@ import { extname, join } from 'node:path';
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = join(process.cwd(), 'public');
+const CACHE_MS = 10 * 60 * 1000;
 
 const state = {
   paperTradingEnabled: true,
@@ -15,7 +16,8 @@ const state = {
   consecutiveLosses: 0,
   pausedReason: null,
   lastMarket: [],
-  lastUpdated: null
+  lastUpdated: null,
+  cacheUntil: 0
 };
 
 const CONFIG = {
@@ -29,6 +31,19 @@ const CONFIG = {
   minMarketCapUsd: 100_000_000,
   maxConsecutiveLosses: 3
 };
+
+const FALLBACK_COINS = [
+  ['bitcoin', 'Bitcoin', 'BTC', 64200, 1280000000000, 31000000000, 2.7, 1],
+  ['ethereum', 'Ethereum', 'ETH', 3150, 378000000000, 18000000000, 4.3, 2],
+  ['solana', 'Solana', 'SOL', 145, 66000000000, 4200000000, 6.8, 5],
+  ['binancecoin', 'BNB', 'BNB', 585, 90000000000, 1500000000, 3.4, 4],
+  ['ripple', 'XRP', 'XRP', 0.62, 35000000000, 2100000000, 5.2, 7],
+  ['dogecoin', 'Dogecoin', 'DOGE', 0.15, 22000000000, 1900000000, 8.9, 9],
+  ['cardano', 'Cardano', 'ADA', 0.46, 16000000000, 520000000, 3.6, 10],
+  ['avalanche-2', 'Avalanche', 'AVAX', 38, 15000000000, 760000000, 9.4, 11],
+  ['chainlink', 'Chainlink', 'LINK', 15.2, 9000000000, 690000000, 4.8, 14],
+  ['polkadot', 'Polkadot', 'DOT', 7.1, 9900000000, 380000000, 2.9, 15]
+];
 
 function safeNumber(value, fallback = 0) {
   const n = Number(value);
@@ -105,29 +120,62 @@ function classify(score, danger) {
   return 'NEUTRAL';
 }
 
+function normalizeCoin(coin) {
+  const score = scoreCoin(coin);
+  const danger = dangerLabel(coin);
+  return {
+    id: coin.id,
+    name: coin.name,
+    symbol: String(coin.symbol || '').toUpperCase(),
+    image: coin.image,
+    price: safeNumber(coin.current_price),
+    marketCap: safeNumber(coin.market_cap),
+    volume: safeNumber(coin.total_volume),
+    change24h: safeNumber(coin.price_change_percentage_24h),
+    rank: coin.market_cap_rank,
+    score,
+    danger,
+    className: classify(score, danger)
+  };
+}
+
+function fallbackMarket() {
+  return FALLBACK_COINS.map(([id, name, symbol, price, marketCap, volume, change, rank]) => normalizeCoin({
+    id,
+    name,
+    symbol,
+    current_price: price,
+    market_cap: marketCap,
+    total_volume: volume,
+    price_change_percentage_24h: change,
+    market_cap_rank: rank,
+    image: `https://assets.coingecko.com/coins/images/1/large/bitcoin.png`
+  })).sort((a, b) => b.score - a.score);
+}
+
 async function fetchMarket() {
+  if (state.lastMarket.length && Date.now() < state.cacheUntil) {
+    return { market: state.lastMarket, source: 'cache', warning: null };
+  }
+
   const url = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=volume_desc&per_page=80&page=1&sparkline=false&price_change_percentage=24h';
-  const response = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'crypto-radar-pro/1.0' } });
-  if (!response.ok) throw new Error(`CoinGecko API error ${response.status}`);
-  const data = await response.json();
-  return data.map((coin) => {
-    const score = scoreCoin(coin);
-    const danger = dangerLabel(coin);
-    return {
-      id: coin.id,
-      name: coin.name,
-      symbol: String(coin.symbol || '').toUpperCase(),
-      image: coin.image,
-      price: safeNumber(coin.current_price),
-      marketCap: safeNumber(coin.market_cap),
-      volume: safeNumber(coin.total_volume),
-      change24h: safeNumber(coin.price_change_percentage_24h),
-      rank: coin.market_cap_rank,
-      score,
-      danger,
-      className: classify(score, danger)
-    };
-  }).sort((a, b) => b.score - a.score);
+  try {
+    const response = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'crypto-radar-pro/1.0' } });
+    if (!response.ok) throw new Error(`CoinGecko API error ${response.status}`);
+    const data = await response.json();
+    const market = data.map(normalizeCoin).sort((a, b) => b.score - a.score);
+    state.lastMarket = market;
+    state.cacheUntil = Date.now() + CACHE_MS;
+    return { market, source: 'coingecko', warning: null };
+  } catch (error) {
+    if (state.lastMarket.length) {
+      return { market: state.lastMarket, source: 'cache', warning: `${error.message} / キャッシュ表示中` };
+    }
+    const market = fallbackMarket();
+    state.lastMarket = market;
+    state.cacheUntil = Date.now() + 2 * 60 * 1000;
+    return { market, source: 'fallback', warning: `${error.message} / デモデータ表示中` };
+  }
 }
 
 function findPosition(symbol) { return state.positions.find((p) => p.symbol === symbol); }
@@ -139,10 +187,8 @@ function openPaperTrade(coin) {
   if (coin.change24h < 3 || coin.change24h > 12 || coin.danger !== '通常監視') return;
   const spend = state.cash * CONFIG.positionSizePct;
   if (spend < 25 || coin.price <= 0) return;
-  const qty = spend / coin.price;
   state.cash -= spend;
-  const position = { id: `${coin.symbol}-${Date.now()}`, symbol: coin.symbol, name: coin.name, image: coin.image, entryPrice: coin.price, qty, cost: spend, openedAt: new Date().toISOString(), scoreAtEntry: coin.score };
-  state.positions.push(position);
+  state.positions.push({ id: `${coin.symbol}-${Date.now()}`, symbol: coin.symbol, name: coin.name, image: coin.image, entryPrice: coin.price, qty: spend / coin.price, cost: spend, openedAt: new Date().toISOString(), scoreAtEntry: coin.score });
   state.trades.unshift({ type: 'BUY', symbol: coin.symbol, name: coin.name, price: coin.price, amountUsd: spend, pnlUsd: 0, pnlPct: 0, reason: 'Score条件一致によるペーパートレード買い', time: new Date().toISOString() });
 }
 
@@ -212,29 +258,19 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (req.method === 'OPTIONS') return json(res, 200, { ok: true });
 
-  if (req.method === 'GET' && url.pathname === '/api/health') {
-    return json(res, 200, { ok: true, name: 'Crypto Radar Pro', mode: 'paper-trading', realTrading: false });
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/news') {
-    return json(res, 200, { sources: [
-      { name: 'Binance Announcements', url: 'https://www.binance.com/en/support/announcement' },
-      { name: 'Coinbase Blog', url: 'https://www.coinbase.com/blog' },
-      { name: 'OKX Announcements', url: 'https://www.okx.com/help/section/announcements' },
-      { name: 'CoinGecko Trending', url: 'https://www.coingecko.com/en/discover' }
-    ], note: '公式ニュースはリンク確認方式。次段階で有料API・RSS・通知を追加できます。' });
-  }
+  if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true, name: 'Crypto Radar Pro', mode: 'paper-trading', realTrading: false });
+  if (req.method === 'GET' && url.pathname === '/api/news') return json(res, 200, { sources: [
+    { name: 'Binance Announcements', url: 'https://www.binance.com/en/support/announcement' },
+    { name: 'Coinbase Blog', url: 'https://www.coinbase.com/blog' },
+    { name: 'OKX Announcements', url: 'https://www.okx.com/help/section/announcements' },
+    { name: 'CoinGecko Trending', url: 'https://www.coingecko.com/en/discover' }
+  ], note: '公式ニュースはリンク確認方式。次段階で有料API・RSS・通知を追加できます。' });
 
   if (req.method === 'GET' && url.pathname === '/api/market') {
-    try {
-      const market = await fetchMarket();
-      state.lastMarket = market;
-      state.lastUpdated = new Date().toISOString();
-      updatePaperTrading(market);
-      return json(res, 200, { updatedAt: state.lastUpdated, config: CONFIG, market, portfolio: portfolioSummary(market), trading: { paperTradingEnabled: state.paperTradingEnabled, pausedReason: state.pausedReason, consecutiveLosses: state.consecutiveLosses }, trades: state.trades.slice(0, 80) });
-    } catch (err) {
-      return json(res, 500, { error: 'market_fetch_failed', message: err.message });
-    }
+    const result = await fetchMarket();
+    state.lastUpdated = new Date().toISOString();
+    updatePaperTrading(result.market);
+    return json(res, 200, { updatedAt: state.lastUpdated, source: result.source, warning: result.warning, config: CONFIG, market: result.market, portfolio: portfolioSummary(result.market), trading: { paperTradingEnabled: state.paperTradingEnabled, pausedReason: state.pausedReason, consecutiveLosses: state.consecutiveLosses }, trades: state.trades.slice(0, 80) });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/trading/toggle') {
