@@ -13,11 +13,13 @@ const PRODUCTS = [
   ['DOGE-USD','DOGE','Dogecoin',9], ['ADA-USD','ADA','Cardano',10], ['AVAX-USD','AVAX','Avalanche',11], ['LINK-USD','LINK','Chainlink',14],
   ['DOT-USD','DOT','Polkadot',15], ['LTC-USD','LTC','Litecoin',20], ['BCH-USD','BCH','Bitcoin Cash',21], ['UNI-USD','UNI','Uniswap',25]
 ];
+
+// Coinbase Blog / OKX Announcements are intentionally disabled because they are often blocked by bot protection on Render.
+// News monitoring is limited to Binance Announcements only.
 const NEWS_SOURCES = [
-  { name: 'Binance Announcements', url: 'https://www.binance.com/en/support/announcement' },
-  { name: 'Coinbase Blog', url: 'https://www.coinbase.com/blog' },
-  { name: 'OKX Announcements', url: 'https://www.okx.com/help/section/announcements' }
+  { name: 'Binance Announcements', url: 'https://www.binance.com/en/support/announcement' }
 ];
+
 const state = { cacheUntil: 0, lastMarket: [], lastNews: [], alerts: [], lastAlertKeys: {}, lastUpdated: null };
 const notificationEnabled = Boolean(LINE_CHANNEL_ACCESS_TOKEN && LINE_TO);
 const safe = (v, f = 0) => { const n = Number(v); return Number.isFinite(n) ? n : f; };
@@ -25,8 +27,8 @@ const pct = (a, b) => b ? ((a - b) / b) * 100 : 0;
 const avg = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 function json(res, code, data) { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(data)); }
-async function fetchJson(url) { const r = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'crypto-signal-cockpit/5.0' } }); if (!r.ok) throw new Error(`${r.status} ${url}`); return r.json(); }
-async function fetchText(url) { const r = await fetch(url, { headers: { accept: 'text/html,application/rss+xml,text/xml', 'user-agent': 'crypto-signal-cockpit/5.0' } }); if (!r.ok) throw new Error(`${r.status} ${url}`); return r.text(); }
+async function fetchJson(url) { const r = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'crypto-signal-cockpit/5.1' } }); if (!r.ok) throw new Error(`${r.status} ${url}`); return r.json(); }
+async function fetchText(url) { const r = await fetch(url, { headers: { accept: 'text/html,application/rss+xml,text/xml', 'user-agent': 'crypto-signal-cockpit/5.1' } }); if (!r.ok) throw new Error(`${r.status} ${url}`); return r.text(); }
 function strip(s) { return String(s || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); }
 function candles(raw) { return raw.map(c => ({ time: c[0], low: safe(c[1]), high: safe(c[2]), open: safe(c[3]), close: safe(c[4]), volume: safe(c[5]) })).sort((a,b)=>a.time-b.time).filter(c=>c.close>0); }
 function backtest(cs) {
@@ -88,13 +90,18 @@ async function fetchNews() {
   const items=[];
   for (const s of NEWS_SOURCES) {
     try {
-      const html=await fetchText(s.url); const title=strip(html.match(/<title[^>]*>(.*?)<\/title>/i)?.[1] || s.name);
+      const html=await fetchText(s.url);
+      const title=strip(html.match(/<title[^>]*>(.*?)<\/title>/i)?.[1] || s.name);
       const titleLower=title.toLowerCase();
       const strong=['listing','new asset','will list','launchpool','airdrop','etf approval','futures listing'].filter(k=>titleLower.includes(k));
       items.push({ source:s.name, title, url:s.url, priority:strong.length?'HIGH':'NORMAL', keywords:strong, detectedAt:new Date().toISOString() });
-    } catch(e) { items.push({ source:s.name, title:'取得失敗', url:s.url, priority:'ERROR', keywords:[], error:e.message, detectedAt:new Date().toISOString() }); }
+    } catch(e) {
+      // Do not add blocked/failed news sources to the UI. Keep the UI clean and Binance-only.
+      console.warn(`News fetch skipped: ${s.name}: ${e.message}`);
+    }
   }
-  state.lastNews=items; return items;
+  state.lastNews=items;
+  return items;
 }
 function signals(market, news) {
   const buy=market.filter(c=>c.decision==='BUY_WATCH');
@@ -126,7 +133,7 @@ async function emitAlerts(sig) {
   state.alerts=[...created,...state.alerts].slice(0,50); return created;
 }
 function portfolioSummary(){return{cash:10000,openValue:0,totalEquity:10000,closedPnL:0,totalReturnPct:0,winRate:0,closedTrades:0,positions:[]};}
-async function serveStatic(req,res){const url=new URL(req.url,`http://${req.headers.host}`);const p=url.pathname==='/'?'/index.html':url.pathname;const filePath=join(PUBLIC_DIR,p.replace(/^\/+/,''));try{const data=await readFile(filePath);const types={'.html':'text/html; charset=utf-8','.css':'text/css','.js':'text/javascript'};res.writeHead(200,{'content-type':types[extname(filePath)]||'application/octet-stream'});res.end(data);}catch{res.writeHead(404);res.end('Not found');}}
+async function serveStatic(req,res){const url=new URL(req.url,`http://${req.headers.host}`);const p=url.pathname==='/'?'/index.html':url.pathname;const filePath=join(PUBLIC_DIR,p.replace(/^\/+/,'') );try{const data=await readFile(filePath);const types={'.html':'text/html; charset=utf-8','.css':'text/css','.js':'text/javascript'};res.writeHead(200,{'content-type':types[extname(filePath)]||'application/octet-stream'});res.end(data);}catch{res.writeHead(404);res.end('Not found');}}
 const server=http.createServer(async(req,res)=>{const url=new URL(req.url,`http://${req.headers.host}`);if(req.method==='OPTIONS')return json(res,200,{ok:true});
  if(req.method==='GET'&&url.pathname==='/api/health')return json(res,200,{ok:true,name:'Crypto Signal Cockpit',notificationEnabled});
  if(req.method==='GET'&&url.pathname==='/api/market'){
